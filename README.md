@@ -22,18 +22,6 @@ Copy all `.lua` files to:
 ![](cdj3000-touch-audio.png)
 
 
-## Protocols
-
-| File | Layer | Display filter |
-|------|-------|----------------|
-| `pro-dj-link-announce.lua` | UDP announce (:50000) | `pdj_announce` |
-| `pro-dj-link-status.lua` | UDP status (:50002) | `pdj_status` |
-| `pro-dj-link-beat.lua` | UDP beat (:50001) | `pdj_beat` |
-| `pro-dj-link-audio.lua` | UDP audio | `pdj_audio` |
-| `pro-dj-link-dbserver.lua` | TCP dbserver (library / menu API) | `pdj_dbserver` |
-
-The DB Server dissector covers the TCP metadata protocol (Deep Symmetry **dbserver**, magic `0x872349AE`). It is **not** the on-disk USB DeviceSQL/PDB export format.
-
 ## Contributions
 
 Contributions are welcome!
