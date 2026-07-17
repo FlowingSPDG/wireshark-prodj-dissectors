@@ -170,6 +170,37 @@ local function read_string_field(tvb, offset, remain)
   return s, offset + 5 + nbytes, offset + 5, nbytes
 end
 
+-- Collapse consecutive duplicate type names: Menu Item×6, Menu Footer
+local function format_type_list(types)
+  if #types == 0 then return "Unknown" end
+  local parts = {}
+  local i = 1
+  while i <= #types do
+    local j = i
+    while j <= #types and types[j] == types[i] do
+      j = j + 1
+    end
+    local n = j - i
+    if n > 1 then
+      parts[#parts + 1] = types[i] .. "×" .. n
+    else
+      parts[#parts + 1] = types[i]
+    end
+    i = j
+  end
+  return table.concat(parts, ", ")
+end
+
+-- Match pro-dj-link-*: "<port> Len=<n> [<detail>] From=<sender>"
+local function set_cols(pkt, tvb, detail)
+  pkt.cols.protocol = "PRODJ DB"
+  pkt.cols.info = tostring(pkt.dst_port)
+    .. " Len=" .. tvb:len()
+    .. " [" .. detail .. "]"
+    .. " From=" .. tostring(pkt.src)
+end
+
+-- Returns consumed length, type description (or nil on failure)
 local function dissect_message(tvb, offset, tree, pkt)
   local start = offset
   local remain = tvb:len() - offset
@@ -187,13 +218,12 @@ local function dissect_message(tvb, offset, tree, pkt)
 
   local name = pdj_dbserver_opcodes[mtype] or "Unknown"
   local subtree = tree:add(p_pdj_dbserver, tvb(start, math.min(64, tvb:len() - start)),
-    string.format("DB Server %s (0x%04x) tx=0x%08x argc=%d", name, mtype, tx, argc))
+    "AlphaTheta PRO DJ LINK Protocol (DB Server), Type: " .. name
+      .. string.format(" (0x%04x), tx=0x%08x, argc=%d", mtype, tx, argc))
   subtree:add(pdj_dbserver_f.magic, tvb(start + 1, 4))
   subtree:add(pdj_dbserver_f.tx_id, tvb(o1 + 1, 4))
   subtree:add(pdj_dbserver_f.msg_type, tvb(o2 + 1, 2))
   subtree:add(pdj_dbserver_f.argc, tvb(o3 + 1, 1))
-
-  pkt.cols.info:append(string.format(" %s", name))
 
   local pos = o4
   remain = tvb:len() - pos
@@ -286,7 +316,7 @@ local function dissect_message(tvb, offset, tree, pkt)
       "cancel/teardown (server typically silent)")
   end
 
-  return pos - start
+  return pos - start, name
 end
 
 function p_pdj_dbserver.dissector(tvb, pkt, tree)
@@ -295,29 +325,25 @@ function p_pdj_dbserver.dissector(tvb, pkt, tree)
   if len < 5 then return 0 end
 
   if len >= 5 and tvb(0, 1):uint() == 0x11 and tvb(1, 4):uint() == 1 and len <= 8 then
-    pkt.cols.protocol = "PDJ-DB"
-    pkt.cols.info = "Greeting"
-    local t = tree:add(p_pdj_dbserver, tvb(), "DB Server Greeting")
+    local t = tree:add(p_pdj_dbserver, tvb(),
+      "AlphaTheta PRO DJ LINK Protocol (DB Server), Type: Greeting")
     t:add(pdj_dbserver_f.greeting, tvb(1, 4))
+    set_cols(pkt, tvb, "Greeting")
     return len
   end
 
   local consumed = 0
-  local found = false
+  local types = {}
   while offset + 6 <= len do
     local matched = false
     for i = offset, len - 6 do
       if tvb(i, 1):uint() == 0x11 and tvb(i + 1, 4):uint() == MAGIC then
-        if not found then
-          pkt.cols.protocol = "PDJ-DB"
-          pkt.cols.info = "DB Server"
-          found = true
-        end
-        local msg_len = dissect_message(tvb, i, tree, pkt)
+        local msg_len, type_name = dissect_message(tvb, i, tree, pkt)
         if not msg_len or msg_len <= 0 then
           offset = i + 1
           break
         end
+        types[#types + 1] = type_name or "Unknown"
         offset = i + msg_len
         consumed = offset
         matched = true
@@ -325,6 +351,9 @@ function p_pdj_dbserver.dissector(tvb, pkt, tree)
       end
     end
     if not matched then break end
+  end
+  if #types > 0 then
+    set_cols(pkt, tvb, format_type_list(types))
   end
   return consumed
 end
