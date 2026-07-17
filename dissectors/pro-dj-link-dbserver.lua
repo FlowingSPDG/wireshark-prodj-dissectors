@@ -24,9 +24,10 @@
 -- limitations under the License.
 --
 --
--- TCP database / metadata server (Deep Symmetry "dbserver"):
--- heuristic on 0x11 + magic 0x872349AE after :12523 port discovery.
--- Not the on-disk USB DeviceSQL / PDB export format.
+-- Players advertise a dynamic TCP port via :12523; register a heuristic on
+-- magic 0x872349AE (and the session greeting) so captures dissect without
+-- binding every ephemeral dbserver port by hand.
+--
 
 --------------------------------------------------
 -- AlphaTheta PRO DJ LINK Protocol (DB Server)
@@ -148,7 +149,7 @@ local function read_binary_field(tvb, offset, remain)
   return ln, offset + 5, offset + 5 + ln
 end
 
--- Returns display string, next offset, data_start, data_len
+-- Wire strings are UTF-16; build a short ASCII preview for the tree/Info path.
 local function read_string_field(tvb, offset, remain)
   if remain < 5 then return nil end
   if tvb(offset, 1):uint() ~= 0x26 then return nil end
@@ -170,7 +171,7 @@ local function read_string_field(tvb, offset, remain)
   return s, offset + 5 + nbytes, offset + 5, nbytes
 end
 
--- Collapse consecutive duplicate type names: Menu Item×6, Menu Footer
+-- Keep Info readable when one TCP segment carries a whole menu render.
 local function format_type_list(types)
   if #types == 0 then return "Unknown" end
   local parts = {}
@@ -191,7 +192,7 @@ local function format_type_list(types)
   return table.concat(parts, ", ")
 end
 
--- Match pro-dj-link-*: "<port> Len=<n> [<detail>] From=<sender>"
+-- Same Info shape as announce/status/beat so the packet list stays scannable.
 local function set_cols(pkt, tvb, detail)
   pkt.cols.protocol = "PRODJ DB"
   pkt.cols.info = tostring(pkt.dst_port)
@@ -200,7 +201,7 @@ local function set_cols(pkt, tvb, detail)
     .. " From=" .. tostring(pkt.src)
 end
 
--- Returns consumed length, type description (or nil on failure)
+-- Also return the type name so multi-PDU segments can share one Info line.
 local function dissect_message(tvb, offset, tree, pkt)
   local start = offset
   local remain = tvb:len() - offset
@@ -245,7 +246,7 @@ local function dissect_message(tvb, offset, tree, pkt)
     remain = tvb:len() - pos
     if remain <= 0 then break end
     local tag = tvb(pos, 1):uint()
-    -- tree:add(field, tvbrange, value, nil, label) — value must be numeric for ProtoField
+    -- 3rd arg is the field value; a string label here trips Wireshark's Lua binding.
     local argtree = subtree:add(pdj_dbserver_f.arg_tag, tvb(pos, 1), tag, nil,
       string.format("(arg[%d])", i))
 
